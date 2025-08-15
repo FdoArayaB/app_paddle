@@ -4,22 +4,37 @@ import psycopg2
 import os
 from database import init_db
 
-# --- Configuración y Lógica de la Aplicación ---
+# --- Lógica de la Conexión a la Base de Datos con Caching ---
 
-# Inicializa la base de datos cada vez que la aplicación se ejecuta
-init_db()
-
-# Conexión principal para la aplicación
-try:
-    DATABASE_URL = os.environ.get('DATABASE_URL')
-    if not DATABASE_URL:
-        st.error("Error: La variable de entorno DATABASE_URL no está configurada.")
+# Esta función solo se ejecutará una vez
+# Streamlit la guarda en caché y reutiliza la conexión en cada rerun
+@st.cache_resource
+def get_db_connection():
+    try:
+        DATABASE_URL = os.environ.get('DATABASE_URL')
+        if not DATABASE_URL:
+            # En la nube, esta variable se carga desde los "Secrets"
+            st.error("Error: La variable de entorno DATABASE_URL no está configurada.")
+            st.stop()
+        
+        # Conexión a la base de datos de PostgreSQL
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except Exception as e:
+        st.error(f"Error al conectar a la base de datos: {e}")
         st.stop()
-    conn = psycopg2.connect(DATABASE_URL)
-    cursor = conn.cursor()
-except Exception as e:
-    st.error(f"Error al conectar a la base de datos: {e}")
-    st.stop()
+
+# --- Lógica Principal de la Aplicación ---
+
+# Inicializa las tablas de la base de datos si no existen.
+# Solo ejecuta esto una vez desde tu terminal:
+# `export DATABASE_URL="..." && python -c "from database import init_db; init_db()"`
+# Una vez que las tablas están creadas, no es necesario volver a ejecutar esta función.
+# init_db()
+
+# Obtén la conexión a la base de datos
+conn = get_db_connection()
+cursor = conn.cursor()
 
 
 st.title("🎾 Registro de Partidos de Pádel")
