@@ -2,6 +2,14 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 
+# Importa la función desde el archivo database.py
+from database import init_db
+
+# --- Configuración y Lógica de la Aplicación ---
+
+# Inicializa la base de datos cada vez que la aplicación se ejecuta
+init_db()
+
 # Conexión a la base de datos
 conn = sqlite3.connect("padel.db")
 cursor = conn.cursor()
