@@ -1,8 +1,7 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
-
-# Importa la función desde el archivo database.py
+import psycopg2
+import os
 from database import init_db
 
 # --- Configuración y Lógica de la Aplicación ---
@@ -10,9 +9,18 @@ from database import init_db
 # Inicializa la base de datos cada vez que la aplicación se ejecuta
 init_db()
 
-# Conexión a la base de datos
-conn = sqlite3.connect("padel.db")
-cursor = conn.cursor()
+# Conexión principal para la aplicación
+try:
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    if not DATABASE_URL:
+        st.error("Error: La variable de entorno DATABASE_URL no está configurada.")
+        st.stop()
+    conn = psycopg2.connect(DATABASE_URL)
+    cursor = conn.cursor()
+except Exception as e:
+    st.error(f"Error al conectar a la base de datos: {e}")
+    st.stop()
+
 
 st.title("🎾 Registro de Partidos de Pádel")
 
@@ -31,13 +39,17 @@ with tab1:
 
         if submit_jugador:
             try:
-                cursor.execute("INSERT INTO usuarios (nombre, nickname) VALUES (?, ?)", (nombre, nickname))
+                # Se usa %s para PostgreSQL
+                cursor.execute("INSERT INTO usuarios (nombre, nickname) VALUES (%s, %s)", (nombre, nickname))
                 conn.commit()
                 st.success(f"✅ Jugador '{nombre}' registrado correctamente.")
-            except sqlite3.IntegrityError:
+            except psycopg2.errors.UniqueViolation:
+                # Se usa psycopg2.errors.UniqueViolation para PostgreSQL
                 st.error("❌ Ese apodo ya está registrado.")
+                conn.rollback() # Es buena práctica hacer rollback en caso de error
             except Exception as e:
                 st.error(f"⚠️ Error: {e}")
+                conn.rollback()
 
     st.subheader("📋 Jugadores Registrados")
     df_jugadores = pd.read_sql_query("SELECT nombre, nickname, fecha_registro FROM usuarios", conn)
@@ -68,15 +80,16 @@ with tab2:
                     st.error("❌ Un equipo debe tener dos jugadores diferentes.")
                 else:
                     try:
-                        cursor.execute("INSERT INTO equipos (nombre) VALUES (?)", (nombre_equipo,))
-                        equipo_id = cursor.lastrowid
-
-                        cursor.execute("INSERT INTO jugadores_equipos (equipo_id, usuario_id) VALUES (?, ?)", (equipo_id, jugador1_id))
-                        cursor.execute("INSERT INTO jugadores_equipos (equipo_id, usuario_id) VALUES (?, ?)", (equipo_id, jugador2_id))
+                        cursor.execute("INSERT INTO equipos (nombre) VALUES (%s) RETURNING id", (nombre_equipo,))
+                        equipo_id = cursor.fetchone()[0]
+                        
+                        cursor.execute("INSERT INTO jugadores_equipos (equipo_id, usuario_id) VALUES (%s, %s)", (equipo_id, jugador1_id))
+                        cursor.execute("INSERT INTO jugadores_equipos (equipo_id, usuario_id) VALUES (%s, %s)", (equipo_id, jugador2_id))
                         conn.commit()
                         st.success(f"✅ Equipo '{nombre_equipo}' creado y jugadores asignados.")
                     except Exception as e:
                         st.error(f"⚠️ Error: {e}")
+                        conn.rollback()
 
     st.subheader("📋 Equipos Creados")
     df_equipos = pd.read_sql_query("""
@@ -130,21 +143,17 @@ with tab3:
                 if equipo_1_id == equipo_2_id:
                     st.error("❌ Los equipos no pueden ser iguales.")
                 else:
-                    # LÍNEAS DE DEPURACIÓN PARA VERIFICAR CÁLCULOS
-                    st.write(f"Valores de los sets procesados: {sets}")
-                    ganador_sets_e1 = sum(1 for p1, p2 in sets if p1 > p2)
-                    ganador_sets_e2 = sum(1 for p1, p2 in sets if p2 > p1)
-                    st.write(f"Sets ganados por Equipo 1: {ganador_sets_e1}")
-                    st.write(f"Sets ganados por Equipo 2: {ganador_sets_e2}")
-
                     try:
-                        cursor.execute("INSERT INTO partidos (fecha, lugar, equipo_1_id, equipo_2_id) VALUES (?, ?, ?, ?)",
+                        cursor.execute("INSERT INTO partidos (fecha, lugar, equipo_1_id, equipo_2_id) VALUES (%s, %s, %s, %s) RETURNING id",
                                    (fecha, lugar, equipo_1_id, equipo_2_id))
-                        partido_id = cursor.lastrowid
+                        partido_id = cursor.fetchone()[0]
                         
                         for i, (puntos_e1, puntos_e2) in enumerate(sets):
-                            cursor.execute("INSERT INTO sets (partido_id, numero_set, equipo_1_puntos, equipo_2_puntos) VALUES (?, ?, ?, ?)",
+                            cursor.execute("INSERT INTO sets (partido_id, numero_set, equipo_1_puntos, equipo_2_puntos) VALUES (%s, %s, %s, %s)",
                                        (partido_id, i + 1, puntos_e1, puntos_e2))
+
+                        ganador_sets_e1 = sum(1 for p1, p2 in sets if p1 > p2)
+                        ganador_sets_e2 = sum(1 for p1, p2 in sets if p2 > p1)
 
                         resultado_e1 = "Empate"
                         resultado_e2 = "Empate"
@@ -155,15 +164,16 @@ with tab3:
                             resultado_e1 = "Perdedor"
                             resultado_e2 = "Ganador"
 
-                        cursor.execute("INSERT INTO equipos_partidos (partido_id, equipo_id, resultado) VALUES (?, ?, ?)",
+                        cursor.execute("INSERT INTO equipos_partidos (partido_id, equipo_id, resultado) VALUES (%s, %s, %s)",
                                    (partido_id, equipo_1_id, resultado_e1))
-                        cursor.execute("INSERT INTO equipos_partidos (partido_id, equipo_id, resultado) VALUES (?, ?, ?)",
+                        cursor.execute("INSERT INTO equipos_partidos (partido_id, equipo_id, resultado) VALUES (%s, %s, %s)",
                                    (partido_id, equipo_2_id, resultado_e2))
                         
                         conn.commit()
                         st.success("✅ Partido y resultados registrados correctamente.")
                     except Exception as e:
                         st.error(f"⚠️ Error: {e}")
+                        conn.rollback()
 
     st.subheader("📋 Partidos Registrados")
     df_partidos = pd.read_sql_query("""
