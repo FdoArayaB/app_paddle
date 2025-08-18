@@ -201,4 +201,4 @@ with tab3:
     """, conn)
     st.dataframe(df_partidos)
 
-conn.close()
+#conn.close()
